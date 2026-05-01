@@ -220,11 +220,17 @@ app.put("/api/settings", async (req, res) => {
 });
 
 // Serve frontend static files (built by vite)
-const frontendDist = path.join(process.cwd(), "dist");
+const frontendDist = path.join(process.cwd(), "dist", "public");
 
 app.use(express.static(frontendDist));
 
-app.get("/*path", (_req, res) => {
+// rota raiz
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(frontendDist, "index.html"));
+});
+
+// fallback (necessário para React Router)
+app.get("/{*path}", (_req, res) => {
   res.sendFile(path.join(frontendDist, "index.html"));
 });
 
