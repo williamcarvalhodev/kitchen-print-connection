@@ -231,7 +231,7 @@ app.get("*", (_req, res) => {
 const PORT = Number(process.env.PORT) || 3000;
 
 initDb().then(() => {
-  app.listen(PORT, () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`Kitchen Print Bridge running on port ${PORT}`);
   });
 }).catch((err) => {
