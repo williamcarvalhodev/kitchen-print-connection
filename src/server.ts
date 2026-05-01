@@ -220,7 +220,8 @@ app.put("/api/settings", async (req, res) => {
 });
 
 // Serve frontend static files (built by vite)
-const frontendDist = path.join(__dirname, "../frontend/dist");
+const frontendDist = path.join(process.cwd(), "dist");
+
 app.use(express.static(frontendDist));
 
 app.get("/*path", (_req, res) => {
