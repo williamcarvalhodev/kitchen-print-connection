@@ -10,6 +10,7 @@ await build({
   format: "esm",
   outfile: "dist/server.mjs",
   sourcemap: true,
+  packages: "external",
   external: ["pg-native"],
 });
 console.log("Server built.");
