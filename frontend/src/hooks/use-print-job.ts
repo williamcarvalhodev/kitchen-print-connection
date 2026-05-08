@@ -23,14 +23,19 @@ const DEFAULT_SETTINGS: AppSettings = {
   pollInterval: 5,
   apiKey: "",
   storeName: "Minha Loja",
-  autoPrint: true,
+  autoPrint: false, // ✅ CORRIGIDO: desativado para não tentar imprimir pelo browser
 };
 
 export function useSettings() {
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const stored = localStorage.getItem("kitchen_bridge_settings");
-      return stored ? { ...DEFAULT_SETTINGS, ...JSON.parse(stored) } : DEFAULT_SETTINGS;
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        // Força autoPrint = false independente do que estava salvo
+        return { ...DEFAULT_SETTINGS, ...parsed, autoPrint: false };
+      }
+      return DEFAULT_SETTINGS;
     } catch {
       return DEFAULT_SETTINGS;
     }
@@ -38,7 +43,8 @@ export function useSettings() {
 
   const saveSettings = useCallback((newSettings: Partial<AppSettings>) => {
     setSettings((prev) => {
-      const updated = { ...prev, ...newSettings };
+      // Garante que autoPrint nunca seja true
+      const updated = { ...prev, ...newSettings, autoPrint: false };
       localStorage.setItem("kitchen_bridge_settings", JSON.stringify(updated));
       return updated;
     });
@@ -107,9 +113,10 @@ export function usePrintJob() {
 
   const { mutateAsync: updateStatus } = useUpdatePrintJobStatus();
 
+  // Busca pedidos apenas para exibir no dashboard — não imprime automaticamente
   const { data: pendingJobs = [], isFetching } = useGetPendingPrintJobs({
     refetchInterval: settings.pollInterval * 1000,
-    enabled: settings.autoPrint,
+    enabled: true, // sempre busca para mostrar no dashboard
   });
 
   const isProcessingRef = useRef(false);
@@ -170,29 +177,19 @@ export function usePrintJob() {
 
   useEffect(() => {
     const processQueue = async () => {
-      if (
-        !settings.autoPrint ||
-        pendingJobs.length === 0 ||
-        isProcessingRef.current
-      )
-        return;
-      isProcessingRef.current = true;
-      for (const job of pendingJobs) {
-        if (!settings.autoPrint) break;
-        await printJob(job);
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-      isProcessingRef.current = false;
+      // ✅ CORRIGIDO: autoPrint sempre false — impressão feita pelo agente local no PC
+      if (pendingJobs.length === 0 || isProcessingRef.current) return;
+      // Não processa automaticamente — só o agente do PC imprime
     };
 
     processQueue();
-  }, [pendingJobs, settings.autoPrint, printJob]);
+  }, [pendingJobs, printJob]);
 
   return {
     printerStatus,
     lastError,
     pendingJobs,
-    isPolling: isFetching && settings.autoPrint,
+    isPolling: isFetching,
     printJob,
     retryJob: printJob,
   };
