@@ -137,7 +137,9 @@ export function usePrintJob() {
         clearTimeout(timeoutId);
         if (!response.ok) throw new Error(`Printer returned HTTP ${response.status}`);
         const responseText = await response.text();
-        if (responseText.includes('success="false"')) throw new Error('Printer returned success="false"');
+        if (responseText.includes('success="false"')) {
+          throw new Error('Printer returned success="false"');
+        }
         await updateStatus({ id: job.id, data: { status: "done" } });
         setPrinterStatus("idle");
         return true;
@@ -146,7 +148,10 @@ export function usePrintJob() {
         setLastError(errMsg);
         setPrinterStatus("error");
         try {
-          await updateStatus({ id: job.id, data: { status: "error", errorMessage: errMsg } });
+          await updateStatus({
+            id: job.id,
+            data: { status: "error", errorMessage: errMsg },
+          });
         } catch {}
         return false;
       }
