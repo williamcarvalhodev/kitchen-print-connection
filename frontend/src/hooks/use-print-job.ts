@@ -104,7 +104,7 @@ ${notes}      <text>--- PAGAMENTO ---\n</text>
 
 export function usePrintJob() {
   const { settings } = useSettings();
-  const [printerStatus, setPrinterStatus] = useState<
+  const [printerStatus, setPrinterStatus] = useState
     "idle" | "printing" | "error" | "offline"
   >("idle");
   const [lastError, setLastError] = useState<string | null>(null);
@@ -145,7 +145,9 @@ export function usePrintJob() {
         const errMsg = err instanceof Error ? err.message : "Unknown error";
         setLastError(errMsg);
         setPrinterStatus("error");
-        try { await updateStatus({ id: job.id, data: { status: "error", errorMessage: errMsg } }); } catch {}
+        try {
+          await updateStatus({ id: job.id, data: { status: "error", errorMessage: errMsg } });
+        } catch {}
         return false;
       }
     },
@@ -153,8 +155,16 @@ export function usePrintJob() {
   );
 
   useEffect(() => {
-    if (pendingJobs.length === 0 || isProcessingRef.current) return;
-    // Auto-print desativado — use Retry Print no dashboard ou aguarde o agente local
+    const processQueue = async () => {
+      if (pendingJobs.length === 0 || isProcessingRef.current) return;
+      isProcessingRef.current = true;
+      for (const job of pendingJobs) {
+        await printJob(job);
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      isProcessingRef.current = false;
+    };
+    processQueue();
   }, [pendingJobs, printJob]);
 
   return {
