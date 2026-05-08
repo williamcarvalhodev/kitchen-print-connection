@@ -17,13 +17,13 @@ export interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  printerIp: "192.168.0.113",
-  printerPort: 80,
+  printerIp: "192.168.0.103",
+  printerPort: 9100,
   protocol: "epos",
   pollInterval: 5,
   apiKey: "",
   storeName: "Minha Loja",
-  autoPrint: false, // ✅ CORRIGIDO: desativado para não tentar imprimir pelo browser
+  autoPrint: false,
 };
 
 export function useSettings() {
@@ -32,7 +32,6 @@ export function useSettings() {
       const stored = localStorage.getItem("kitchen_bridge_settings");
       if (stored) {
         const parsed = JSON.parse(stored);
-        // Força autoPrint = false independente do que estava salvo
         return { ...DEFAULT_SETTINGS, ...parsed, autoPrint: false };
       }
       return DEFAULT_SETTINGS;
@@ -43,7 +42,6 @@ export function useSettings() {
 
   const saveSettings = useCallback((newSettings: Partial<AppSettings>) => {
     setSettings((prev) => {
-      // Garante que autoPrint nunca seja true
       const updated = { ...prev, ...newSettings, autoPrint: false };
       localStorage.setItem("kitchen_bridge_settings", JSON.stringify(updated));
       return updated;
@@ -113,10 +111,9 @@ export function usePrintJob() {
 
   const { mutateAsync: updateStatus } = useUpdatePrintJobStatus();
 
-  // Busca pedidos apenas para exibir no dashboard — não imprime automaticamente
   const { data: pendingJobs = [], isFetching } = useGetPendingPrintJobs({
     refetchInterval: settings.pollInterval * 1000,
-    enabled: true, // sempre busca para mostrar no dashboard
+    enabled: true,
   });
 
   const isProcessingRef = useRef(false);
@@ -126,49 +123,29 @@ export function usePrintJob() {
       try {
         setPrinterStatus("printing");
         setLastError(null);
-
         await updateStatus({ id: job.id, data: { status: "printing" } });
-
         const xml = buildEposXml(job.orderData, settings.storeName);
         const printerUrl = `http://${settings.printerIp}:${settings.printerPort}/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`;
-
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 12000);
-
         const response = await fetch(printerUrl, {
           method: "POST",
           headers: { "Content-Type": "text/xml; charset=utf-8" },
           body: xml,
           signal: controller.signal,
         });
-
         clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          throw new Error(`Printer returned HTTP ${response.status}`);
-        }
-
+        if (!response.ok) throw new Error(`Printer returned HTTP ${response.status}`);
         const responseText = await response.text();
-        if (responseText.includes('success="false"')) {
-          throw new Error('Printer returned success="false"');
-        }
-
+        if (responseText.includes('success="false"')) throw new Error('Printer returned success="false"');
         await updateStatus({ id: job.id, data: { status: "done" } });
         setPrinterStatus("idle");
         return true;
       } catch (err: unknown) {
-        const errMsg =
-          err instanceof Error ? err.message : "Unknown error";
+        const errMsg = err instanceof Error ? err.message : "Unknown error";
         setLastError(errMsg);
         setPrinterStatus("error");
-        try {
-          await updateStatus({
-            id: job.id,
-            data: { status: "error", errorMessage: errMsg },
-          });
-        } catch {
-          // ignore secondary failure
-        }
+        try { await updateStatus({ id: job.id, data: { status: "error", errorMessage: errMsg } }); } catch {}
         return false;
       }
     },
@@ -176,13 +153,8 @@ export function usePrintJob() {
   );
 
   useEffect(() => {
-    const processQueue = async () => {
-      // ✅ CORRIGIDO: autoPrint sempre false — impressão feita pelo agente local no PC
-      if (pendingJobs.length === 0 || isProcessingRef.current) return;
-      // Não processa automaticamente — só o agente do PC imprime
-    };
-
-    processQueue();
+    if (pendingJobs.length === 0 || isProcessingRef.current) return;
+    // Auto-print desativado — use Retry Print no dashboard ou aguarde o agente local
   }, [pendingJobs, printJob]);
 
   return {
