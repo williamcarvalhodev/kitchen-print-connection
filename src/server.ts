@@ -11,8 +11,6 @@ import { eq, desc, and, gte, sql } from "drizzle-orm";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// ─── Database Schema ─────────────────────────────────────────────────────────
-
 const settingsTable = pgTable("settings", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(),
@@ -34,8 +32,6 @@ const printJobsTable = pgTable("print_jobs", {
   index("idx_print_jobs_created_at").on(t.createdAt),
 ]);
 
-// ─── DB Connection ────────────────────────────────────────────────────────────
-
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL environment variable is required");
 }
@@ -43,7 +39,6 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle(pool, { schema: { settingsTable, printJobsTable } });
 
-// Auto-create tables on startup
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -51,7 +46,6 @@ async function initDb() {
       key TEXT NOT NULL UNIQUE,
       value TEXT NOT NULL
     );
-
     CREATE TABLE IF NOT EXISTS print_jobs (
       id SERIAL PRIMARY KEY,
       order_id TEXT NOT NULL UNIQUE,
@@ -63,23 +57,52 @@ async function initDb() {
       updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
       printed_at TIMESTAMP
     );
-
     CREATE INDEX IF NOT EXISTS idx_print_jobs_status ON print_jobs(status);
     CREATE INDEX IF NOT EXISTS idx_print_jobs_created_at ON print_jobs(created_at);
   `);
   console.log("Database initialized");
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 const DEFAULTS: Record<string, string> = {
   printerIp: "192.168.0.113",
-  printerPort: "80",
+  printerPort: "9100",
   printerProtocol: "epos",
   autoRetry: "true",
   retryIntervalSeconds: "5",
   apiKey: "kitchen-bridge-secret",
   storeName: "Minha Loja",
+};
+
+const DEFAULT_LAYOUT = {
+  storeName: "Wagasa Sushi Bar",
+  storeAddress: "Av. Dom Nuno Álvares Pereira 67, Setúbal",
+  storePhone: "+351 938 122 182",
+  storeNif: "516235586",
+  footerMessage: "Obrigado pela sua encomenda!",
+  showCupom1: true,
+  showCupom2: true,
+  cupom1Fields: {
+    showHeader: true,
+    showOrderNumber: true,
+    showDate: true,
+    showPaymentMethod: true,
+    showDeliveryMethod: true,
+    showDeliveryAddress: true,
+    showCustomerName: true,
+    showCustomerPhone: true,
+    showItems: true,
+    showNotes: true,
+    showTotal: true,
+    showFooter: true,
+  },
+  cupom2Fields: {
+    showOrderNumber: true,
+    showDate: true,
+    showCustomerName: true,
+    showItems: true,
+    showNotes: true,
+    showCheckbox: true,
+  },
 };
 
 async function getApiKey(): Promise<string> {
@@ -120,18 +143,40 @@ function formatJob(job: typeof printJobsTable.$inferSelect) {
   };
 }
 
-// ─── Express App ──────────────────────────────────────────────────────────────
-
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Health check
 app.get("/api/healthz", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-// Print Jobs
+// ── Layout API ────────────────────────────────────────────────────────────────
+app.get("/api/layout", async (_req, res) => {
+  try {
+    const row = await db.select().from(settingsTable).where(eq(settingsTable.key, "receiptLayout")).limit(1);
+    if (row[0]) {
+      res.json(JSON.parse(row[0].value));
+    } else {
+      res.json(DEFAULT_LAYOUT);
+    }
+  } catch {
+    res.json(DEFAULT_LAYOUT);
+  }
+});
+
+app.put("/api/layout", async (req, res) => {
+  try {
+    const value = JSON.stringify(req.body);
+    await db.insert(settingsTable).values({ key: "receiptLayout", value })
+      .onConflictDoUpdate({ target: settingsTable.key, set: { value } });
+    res.json(req.body);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Print Jobs ────────────────────────────────────────────────────────────────
 app.get("/api/print-jobs", async (req, res) => {
   const status = req.query.status as string | undefined;
   const limit = Number(req.query.limit) || 50;
@@ -145,13 +190,10 @@ app.get("/api/print-jobs", async (req, res) => {
 app.post("/api/print-jobs", async (req, res) => {
   const { orderId, orderData, apiKey } = req.body;
   if (!orderId || !orderData || !apiKey) return res.status(400).json({ error: "Missing fields" });
-
   const validKey = await getApiKey();
   if (apiKey !== validKey) return res.status(401).json({ error: "Invalid API key" });
-
   const existing = await db.select().from(printJobsTable).where(eq(printJobsTable.orderId, orderId)).limit(1);
   if (existing.length > 0) return res.status(409).json({ error: "Order already queued", job: formatJob(existing[0]) });
-
   const [job] = await db.insert(printJobsTable).values({ orderId, orderData, status: "pending", attempts: 0 }).returning();
   return res.status(201).json(formatJob(job));
 });
@@ -202,7 +244,7 @@ app.patch("/api/print-jobs/:id/status", async (req, res) => {
   res.json(formatJob(job));
 });
 
-// Settings
+// ── Settings ──────────────────────────────────────────────────────────────────
 app.get("/api/settings", async (_req, res) => {
   res.json(mapSettings(await getAllSettings()));
 });
@@ -219,25 +261,12 @@ app.put("/api/settings", async (req, res) => {
   res.json(mapSettings(await getAllSettings()));
 });
 
-// Serve frontend static files (built by vite)
 const frontendDist = path.join(process.cwd(), "dist", "public");
-
 app.use(express.static(frontendDist));
-
-// rota raiz
-app.get("/", (_req, res) => {
-  res.sendFile(path.join(frontendDist, "index.html"));
-});
-
-// fallback (necessário para React Router)
-app.get("/{*path}", (_req, res) => {
-  res.sendFile(path.join(frontendDist, "index.html"));
-});
-
-// ─── Start ────────────────────────────────────────────────────────────────────
+app.get("/", (_req, res) => { res.sendFile(path.join(frontendDist, "index.html")); });
+app.get("/{*path}", (_req, res) => { res.sendFile(path.join(frontendDist, "index.html")); });
 
 const PORT = Number(process.env.PORT) || 3000;
-
 initDb().then(() => {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Kitchen Print Bridge running on port ${PORT}`);
