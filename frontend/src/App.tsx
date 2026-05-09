@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/layout";
 import Dashboard from "@/pages/dashboard";
 import Jobs from "@/pages/jobs";
 import Settings from "@/pages/settings";
+import Layout from "@/pages/layout";
 
 const queryClient = new QueryClient();
 
@@ -17,6 +18,7 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/jobs" component={Jobs} />
         <Route path="/settings" component={Settings} />
+        <Route path="/layout" component={Layout} />
         <Route component={NotFound} />
       </Switch>
     </Sidebar>
