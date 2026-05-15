@@ -11,9 +11,10 @@ const API_URL = "/api/layout";
 
 const DEFAULT_LAYOUT = {
   storeName: "Wagasa Sushi Bar",
-  storeAddress: "Av. Dom Nuno Álvares Pereira 67, Setúbal",
+  storeAddress: "Av. Dom Nuno Alvares Pereira 67, 2840-469 Seixal",
   storePhone: "+351 938 122 182",
   storeNif: "516235586",
+  storeInstagram: "@wagasasushi",
   footerMessage: "Obrigado pela sua encomenda!",
   showCupom1: true,
   showCupom2: true,
@@ -101,13 +102,14 @@ export default function Layout() {
               <FileText className="w-5 h-5 mr-3 text-primary" />
               Store Information
             </CardTitle>
-            <CardDescription className="font-mono text-xs text-muted-foreground">Appears on the receipt header</CardDescription>
+            <CardDescription className="font-mono text-xs text-muted-foreground">Appears on the receipt header and footer</CardDescription>
           </CardHeader>
           <CardContent className="pt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
             {[
               { label: "Store Name", field: "storeName" },
-              { label: "Phone", field: "storePhone" },
               { label: "NIF", field: "storeNif" },
+              { label: "Phone", field: "storePhone" },
+              { label: "Instagram", field: "storeInstagram" },
               { label: "Address", field: "storeAddress" },
               { label: "Footer Message", field: "footerMessage" },
             ].map(({ label, field }) => (
