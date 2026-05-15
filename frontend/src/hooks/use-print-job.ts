@@ -23,7 +23,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   pollInterval: 5,
   apiKey: "",
   storeName: "Minha Loja",
-  autoPrint: true,
+  autoPrint:false,
 };
 
 export function useSettings() {
