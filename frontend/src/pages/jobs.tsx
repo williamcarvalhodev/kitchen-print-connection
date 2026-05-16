@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { useListPrintJobs, type PrintJob } from "@/hooks/api";
-import { usePrintJob } from "@/hooks/use-print-job";
+import { useListPrintJobs, useUpdatePrintJobStatus, type PrintJob } from "@/hooks/api";
 import { format } from "date-fns";
 import { RefreshCw, CheckCircle2, AlertTriangle, Clock, Printer } from "lucide-react";
 
@@ -15,14 +14,18 @@ export default function Jobs() {
     { refetchInterval: 10000 }
   );
 
-  const { printJob } = usePrintJob();
+  const { mutateAsync: updateStatus } = useUpdatePrintJobStatus();
   const [retryingId, setRetryingId] = useState<number | null>(null);
 
+  // FIX: apenas muda o status para "pending" — o agente local trata de imprimir
   const handleRetry = async (job: PrintJob) => {
     setRetryingId(job.id);
-    await printJob(job);
-    await refetch();
-    setRetryingId(null);
+    try {
+      await updateStatus({ id: job.id, data: { status: "pending" } });
+      await refetch();
+    } finally {
+      setRetryingId(null);
+    }
   };
 
   const StatusIcon = ({ status }: { status: string }) => {
