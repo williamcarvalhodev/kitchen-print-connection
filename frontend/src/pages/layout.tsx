@@ -4,18 +4,19 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Save, FileText, ChefHat } from "lucide-react";
+import { Save, FileText, ChefHat, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const API_URL = "/api/layout";
 
 const DEFAULT_LAYOUT = {
   storeName: "Wagasa Sushi Bar",
-  storeAddress: "Av. Dom Nuno Alvares Pereira 67, 2840-469 Seixal",
+  storeAddress: "Av. Dom Nuno Alvares Pereira 67, Setubal",
   storePhone: "+351 938 122 182",
   storeNif: "516235586",
   storeInstagram: "@wagasasushi",
   footerMessage: "Obrigado pela sua encomenda!",
+  printCopies: 1,
   showCupom1: true,
   showCupom2: true,
   cupom1Fields: {
@@ -38,7 +39,7 @@ const DEFAULT_LAYOUT = {
     showCustomerName: true,
     showItems: true,
     showNotes: true,
-    showCheckbox: true,
+    showCheckbox: false,
   },
 };
 
@@ -70,7 +71,7 @@ export default function Layout() {
     setSaving(false);
   }
 
-  function setField(field: string, value: string) {
+  function setField(field: string, value: string | number) {
     setLayout(prev => ({ ...prev, [field]: value }));
   }
 
@@ -96,6 +97,7 @@ export default function Layout() {
           <p className="text-muted-foreground mt-1 text-sm font-mono uppercase tracking-wider">Configure what prints on each receipt</p>
         </div>
 
+        {/* Store Info */}
         <Card className="bg-card border-border">
           <CardHeader className="border-b border-border/50 pb-4">
             <CardTitle className="flex items-center text-lg font-mono tracking-wider uppercase text-foreground">
@@ -125,6 +127,38 @@ export default function Layout() {
           </CardContent>
         </Card>
 
+        {/* Print Copies */}
+        <Card className="bg-card border-border">
+          <CardHeader className="border-b border-border/50 pb-4">
+            <CardTitle className="flex items-center text-lg font-mono tracking-wider uppercase text-foreground">
+              <Copy className="w-5 h-5 mr-3 text-secondary" />
+              Print Copies
+            </CardTitle>
+            <CardDescription className="font-mono text-xs text-muted-foreground">Number of times each order is printed</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-6">
+              {[1, 2, 3].map(n => (
+                <button
+                  key={n}
+                  onClick={() => setField("printCopies", n)}
+                  className={`px-6 py-3 rounded-lg font-mono font-bold text-lg border-2 transition-all ${
+                    layout.printCopies === n
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-card text-muted-foreground hover:border-primary/50"
+                  }`}
+                >
+                  {n}x
+                </button>
+              ))}
+              <span className="text-muted-foreground font-mono text-sm">
+                {layout.printCopies === 1 ? "1 copia por pedido" : `${layout.printCopies} copias por pedido`}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Cupom 1 */}
         <Card className="bg-card border-border">
           <CardHeader className="border-b border-border/50 pb-4">
             <div className="flex items-center justify-between">
@@ -153,6 +187,7 @@ export default function Layout() {
           </CardContent>
         </Card>
 
+        {/* Cupom 2 */}
         <Card className="bg-card border-border">
           <CardHeader className="border-b border-border/50 pb-4">
             <div className="flex items-center justify-between">
