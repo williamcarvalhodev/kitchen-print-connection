@@ -120,16 +120,21 @@ function formatJob(job: typeof printJobsTable.$inferSelect) {
   };
 }
 
+// CORRIGIDO: usa query params em vez de Authorization header
+// O header Authorization é frequentemente removido por proxies/Apache/Nginx com SSL
 async function wcRequest(settings: any, endpoint: string, method = "GET", body?: any) {
-  const url = `${settings.wcUrl}/wp-json/wc/v3/${endpoint}`;
-  const auth = Buffer.from(`${settings.wcKey}:${settings.wcSecret}`).toString("base64");
+  const separator = endpoint.includes("?") ? "&" : "?";
+  const url = `${settings.wcUrl}/wp-json/wc/v3/${endpoint}${separator}consumer_key=${settings.wcKey}&consumer_secret=${settings.wcSecret}`;
   const opts: any = {
     method,
-    headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
   };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(url, opts);
-  if (!res.ok) throw new Error(`WC API error: ${res.status}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`WC API error: ${res.status} - ${errText}`);
+  }
   return res.json();
 }
 
