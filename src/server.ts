@@ -32,9 +32,7 @@ const printJobsTable = pgTable("print_jobs", {
   index("idx_print_jobs_created_at").on(t.createdAt),
 ]);
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is required");
-}
+if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL required");
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle(pool, { schema: { settingsTable, printJobsTable } });
@@ -42,20 +40,14 @@ const db = drizzle(pool, { schema: { settingsTable, printJobsTable } });
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS settings (
-      id SERIAL PRIMARY KEY,
-      key TEXT NOT NULL UNIQUE,
-      value TEXT NOT NULL
+      id SERIAL PRIMARY KEY, key TEXT NOT NULL UNIQUE, value TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS print_jobs (
-      id SERIAL PRIMARY KEY,
-      order_id TEXT NOT NULL UNIQUE,
-      status TEXT NOT NULL DEFAULT 'pending',
-      order_data JSONB NOT NULL,
-      error_message TEXT,
-      attempts INTEGER NOT NULL DEFAULT 0,
+      id SERIAL PRIMARY KEY, order_id TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending', order_data JSONB NOT NULL,
+      error_message TEXT, attempts INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      printed_at TIMESTAMP
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW(), printed_at TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_print_jobs_status ON print_jobs(status);
     CREATE INDEX IF NOT EXISTS idx_print_jobs_created_at ON print_jobs(created_at);
@@ -64,53 +56,42 @@ async function initDb() {
 }
 
 const DEFAULTS: Record<string, string> = {
-  printerIp: "192.168.0.113",
-  printerPort: "9100",
-  printerProtocol: "epos",
-  autoRetry: "true",
-  retryIntervalSeconds: "5",
-  apiKey: "kitchen-bridge-secret",
-  storeName: "Minha Loja",
+  printerIp: "192.168.0.113", printerPort: "9100", printerProtocol: "epos",
+  autoRetry: "true", retryIntervalSeconds: "5",
+  apiKey: "kitchen-bridge-secret", storeName: "Minha Loja",
+  wcUrl: "https://wagasasushibar.com",
+  wcKey: "ck_d95b36787bd39ca83629f4c4f5f88f21a914af12",
+  wcSecret: "cs_027ae567d2506a57d9bb82158217a4ab7de09050",
 };
 
 const DEFAULT_LAYOUT = {
   storeName: "Wagasa Sushi Bar",
-  storeAddress: "Av. Dom Nuno Álvares Pereira 67, Setúbal",
+  storeAddress: "Av. Dom Nuno Alvares Pereira 67, 2840-469 Seixal",
   storePhone: "+351 938 122 182",
   storeNif: "516235586",
+  storeInstagram: "@wagasasushi",
   footerMessage: "Obrigado pela sua encomenda!",
+  printCopies: 1,
   showCupom1: true,
   showCupom2: true,
   cupom1Fields: {
-    showHeader: true,
-    showOrderNumber: true,
-    showDate: true,
-    showPaymentMethod: true,
-    showDeliveryMethod: true,
-    showDeliveryAddress: true,
-    showCustomerName: true,
-    showCustomerPhone: true,
-    showItems: true,
-    showNotes: true,
-    showTotal: true,
-    showFooter: true,
+    showHeader: true, showOrderNumber: true, showDate: true,
+    showPaymentMethod: true, showDeliveryMethod: true, showDeliveryAddress: true,
+    showCustomerName: true, showCustomerPhone: true, showItems: true,
+    showNotes: true, showTotal: true, showFooter: true,
   },
   cupom2Fields: {
-    showOrderNumber: true,
-    showDate: true,
-    showCustomerName: true,
-    showItems: true,
-    showNotes: true,
-    showCheckbox: true,
+    showOrderNumber: true, showDate: true, showCustomerName: true,
+    showItems: true, showNotes: true, showCheckbox: false,
   },
 };
 
-async function getApiKey(): Promise<string> {
-  const setting = await db.select().from(settingsTable).where(eq(settingsTable.key, "apiKey")).limit(1);
-  return setting[0]?.value ?? DEFAULTS.apiKey;
+async function getApiKey() {
+  const s = await db.select().from(settingsTable).where(eq(settingsTable.key, "apiKey")).limit(1);
+  return s[0]?.value ?? DEFAULTS.apiKey;
 }
 
-async function getAllSettings(): Promise<Record<string, string>> {
+async function getAllSettings() {
   const rows = await db.select().from(settingsTable);
   const map: Record<string, string> = { ...DEFAULTS };
   for (const row of rows) map[row.key] = row.value;
@@ -119,23 +100,19 @@ async function getAllSettings(): Promise<Record<string, string>> {
 
 function mapSettings(map: Record<string, string>) {
   return {
-    printerIp: map.printerIp,
-    printerPort: Number(map.printerPort),
+    printerIp: map.printerIp, printerPort: Number(map.printerPort),
     printerProtocol: map.printerProtocol as "epos" | "raw",
     autoRetry: map.autoRetry === "true",
     retryIntervalSeconds: Number(map.retryIntervalSeconds),
-    apiKey: map.apiKey,
-    storeName: map.storeName,
+    apiKey: map.apiKey, storeName: map.storeName,
+    wcUrl: map.wcUrl, wcKey: map.wcKey, wcSecret: map.wcSecret,
   };
 }
 
 function formatJob(job: typeof printJobsTable.$inferSelect) {
   return {
-    id: job.id,
-    orderId: job.orderId,
-    status: job.status,
-    orderData: job.orderData,
-    errorMessage: job.errorMessage,
+    id: job.id, orderId: job.orderId, status: job.status,
+    orderData: job.orderData, errorMessage: job.errorMessage,
     attempts: job.attempts,
     createdAt: job.createdAt.toISOString(),
     updatedAt: job.updatedAt.toISOString(),
@@ -143,26 +120,30 @@ function formatJob(job: typeof printJobsTable.$inferSelect) {
   };
 }
 
+async function wcRequest(settings: any, endpoint: string, method = "GET", body?: any) {
+  const url = `${settings.wcUrl}/wp-json/wc/v3/${endpoint}`;
+  const auth = Buffer.from(`${settings.wcKey}:${settings.wcSecret}`).toString("base64");
+  const opts: any = {
+    method,
+    headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`WC API error: ${res.status}`);
+  return res.json();
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get("/api/healthz", (_req, res) => {
-  res.json({ status: "ok" });
-});
+app.get("/api/healthz", (_req, res) => res.json({ status: "ok" }));
 
-// ── Layout API ────────────────────────────────────────────────────────────────
 app.get("/api/layout", async (_req, res) => {
   try {
     const row = await db.select().from(settingsTable).where(eq(settingsTable.key, "receiptLayout")).limit(1);
-    if (row[0]) {
-      res.json(JSON.parse(row[0].value));
-    } else {
-      res.json(DEFAULT_LAYOUT);
-    }
-  } catch {
-    res.json(DEFAULT_LAYOUT);
-  }
+    res.json(row[0] ? JSON.parse(row[0].value) : DEFAULT_LAYOUT);
+  } catch { res.json(DEFAULT_LAYOUT); }
 });
 
 app.put("/api/layout", async (req, res) => {
@@ -171,12 +152,39 @@ app.put("/api/layout", async (req, res) => {
     await db.insert(settingsTable).values({ key: "receiptLayout", value })
       .onConflictDoUpdate({ target: settingsTable.key, set: { value } });
     res.json(req.body);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Print Jobs ────────────────────────────────────────────────────────────────
+app.get("/api/wc/orders/processing", async (_req, res) => {
+  try {
+    const settings = mapSettings(await getAllSettings());
+    const orders = await wcRequest(settings, "orders?status=processing&per_page=20&orderby=date&order=desc");
+    const mapped = orders.map((o: any) => ({
+      id: o.id,
+      orderNumber: o.number,
+      date: new Date(o.date_created).toLocaleString("pt-PT"),
+      customerName: `${o.billing.first_name} ${o.billing.last_name}`.trim(),
+      customerPhone: o.billing.phone,
+      total: o.total,
+      currency: o.currency_symbol || "EUR",
+      paymentMethod: o.payment_method_title,
+      deliveryMethod: o.shipping_lines?.[0]?.method_title || "Levantamento no local",
+      deliveryAddress: o.shipping?.address_1 ? `${o.shipping.address_1}, ${o.shipping.city}` : null,
+      items: o.line_items?.map((i: any) => ({ name: i.name, quantity: i.quantity, total: i.total })),
+      status: o.status,
+    }));
+    res.json(mapped);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/wc/orders/:id/complete", async (req, res) => {
+  try {
+    const settings = mapSettings(await getAllSettings());
+    const order = await wcRequest(settings, `orders/${req.params.id}`, "PUT", { status: "completed" });
+    res.json({ success: true, orderId: order.id, status: order.status });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 app.get("/api/print-jobs", async (req, res) => {
   const status = req.query.status as string | undefined;
   const limit = Number(req.query.limit) || 50;
@@ -244,13 +252,10 @@ app.patch("/api/print-jobs/:id/status", async (req, res) => {
   res.json(formatJob(job));
 });
 
-// ── Settings ──────────────────────────────────────────────────────────────────
-app.get("/api/settings", async (_req, res) => {
-  res.json(mapSettings(await getAllSettings()));
-});
+app.get("/api/settings", async (_req, res) => res.json(mapSettings(await getAllSettings())));
 
 app.put("/api/settings", async (req, res) => {
-  const allowed = ["printerIp", "printerPort", "printerProtocol", "autoRetry", "retryIntervalSeconds", "apiKey", "storeName"];
+  const allowed = ["printerIp", "printerPort", "printerProtocol", "autoRetry", "retryIntervalSeconds", "apiKey", "storeName", "wcUrl", "wcKey", "wcSecret"];
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
       const value = String(req.body[key]);
@@ -263,15 +268,10 @@ app.put("/api/settings", async (req, res) => {
 
 const frontendDist = path.join(process.cwd(), "dist", "public");
 app.use(express.static(frontendDist));
-app.get("/", (_req, res) => { res.sendFile(path.join(frontendDist, "index.html")); });
-app.get("/{*path}", (_req, res) => { res.sendFile(path.join(frontendDist, "index.html")); });
+app.get("/", (_req, res) => res.sendFile(path.join(frontendDist, "index.html")));
+app.get("/{*path}", (_req, res) => res.sendFile(path.join(frontendDist, "index.html")));
 
 const PORT = Number(process.env.PORT) || 3000;
 initDb().then(() => {
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Kitchen Print Bridge running on port ${PORT}`);
-  });
-}).catch((err) => {
-  console.error("Failed to init DB:", err);
-  process.exit(1);
-});
+  app.listen(PORT, "0.0.0.0", () => console.log(`Kitchen Print Bridge running on port ${PORT}`));
+}).catch(err => { console.error("Failed to init DB:", err); process.exit(1); });
