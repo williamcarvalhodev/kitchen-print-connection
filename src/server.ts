@@ -120,11 +120,8 @@ function formatJob(job: typeof printJobsTable.$inferSelect) {
   };
 }
 
-// CORRIGIDO: usa query params em vez de Authorization header
-// O header Authorization é frequentemente removido por proxies/Apache/Nginx com SSL
 async function wcRequest(settings: any, endpoint: string, method = "GET", body?: any) {
   const separator = endpoint.includes("?") ? "&" : "?";
-  // Adiciona timestamp para evitar cache do WooCommerce/HPOS
   const ts = Date.now();
   const url = `${settings.wcUrl}/wp-json/wc/v3/${endpoint}${separator}consumer_key=${settings.wcKey}&consumer_secret=${settings.wcSecret}&_=${ts}`;
   const opts: any = {
@@ -140,11 +137,109 @@ async function wcRequest(settings: any, endpoint: string, method = "GET", body?:
   return res.json();
 }
 
+// Converte dados brutos do WooCommerce para o formato orderData
+function mapWcOrderToOrderData(o: any) {
+  return {
+    orderNumber: String(o.number || o.id),
+    date: new Date(o.date_created).toLocaleString("pt-PT"),
+    customerName: `${o.billing?.first_name || ""} ${o.billing?.last_name || ""}`.trim(),
+    customerSurname: o.billing?.last_name || "",
+    customerEmail: o.billing?.email || "",
+    customerPhone: o.billing?.phone || "",
+    paymentMethod: o.payment_method_title || "",
+    deliveryMethod: o.shipping_lines?.[0]?.method_title || "Levantamento no local",
+    deliveryAddress: o.shipping?.address_1
+      ? `${o.shipping.address_1}, ${o.shipping.city}`
+      : null,
+    items: (o.line_items || []).map((i: any) => ({
+      name: i.name,
+      quantity: i.quantity,
+      price: i.total,
+      variation: i.meta_data?.find((m: any) => m.key?.startsWith("pa_"))?.value || null,
+      notes: null,
+    })),
+    subtotal: o.subtotal || "",
+    shipping: o.shipping_total ? `${o.shipping_total} €` : "0,00 €",
+    total: o.total || "",
+    totalTax: o.total_tax || "",
+    discount: o.discount_total || null,
+    coupons: (o.coupon_lines || []).map((c: any) => ({
+      code: c.code,
+      discount: c.discount,
+    })),
+    fees: (o.fee_lines || []).map((f: any) => ({
+      name: f.name,
+      amount: `${f.total} €`,
+    })),
+    taxes: (o.tax_lines || []).map((t: any) => ({
+      label: t.label,
+      amount: `${t.tax_total} €`,
+    })),
+    notes: o.customer_note || null,
+  };
+}
+
 const app = express();
 app.use(cors());
+
+// Webhook precisa do body raw para validação de assinatura
+app.use("/api/wc/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
 app.get("/api/healthz", (_req, res) => res.json({ status: "ok" }));
+
+// ── WEBHOOK DO WOOCOMMERCE ────────────────────────────────────────────────────
+// Recebe eventos de pedidos do WooCommerce e cria print jobs automaticamente
+app.post("/api/wc/webhook", async (req, res) => {
+  try {
+    const topic = req.headers["x-wc-webhook-topic"] as string || "";
+    console.log(`Webhook recebido: ${topic}`);
+
+    // Responde 200 imediatamente para o WooCommerce não marcar como falhado
+    res.status(200).json({ received: true });
+
+    // Só processa pedidos actualizados para "processing"
+    if (!topic.includes("order")) return;
+
+    const order = typeof req.body === "string"
+      ? JSON.parse(req.body)
+      : Buffer.isBuffer(req.body)
+        ? JSON.parse(req.body.toString())
+        : req.body;
+
+    if (!order?.id || order?.status !== "processing") {
+      console.log(`Webhook ignorado: status=${order?.status}`);
+      return;
+    }
+
+    const orderId = String(order.id);
+    console.log(`Novo pedido em processamento: #${order.number || orderId}`);
+
+    // Verifica se já existe job para este pedido
+    const existing = await db.select()
+      .from(printJobsTable)
+      .where(eq(printJobsTable.orderId, orderId))
+      .limit(1);
+
+    if (existing.length > 0) {
+      console.log(`Job já existe para pedido #${orderId} (status: ${existing[0].status})`);
+      return;
+    }
+
+    // Cria o print job
+    const orderData = mapWcOrderToOrderData(order);
+    await db.insert(printJobsTable).values({
+      orderId,
+      orderData,
+      status: "pending",
+      attempts: 0,
+    });
+
+    console.log(`Print job criado para pedido #${order.number || orderId}`);
+  } catch (err: any) {
+    console.error(`Erro no webhook: ${err.message}`);
+  }
+});
 
 app.get("/api/layout", async (_req, res) => {
   try {
@@ -166,11 +261,7 @@ app.get("/api/wc/orders/processing", async (_req, res) => {
   try {
     const settings = mapSettings(await getAllSettings());
     const orders = await wcRequest(settings, "orders?status=processing&per_page=20&orderby=date&order=desc");
-
-    // FIX: filtra pedidos que realmente têm status "processing"
-    // O HPOS pode retornar pedidos com status desincronizado
     const processingOrders = orders.filter((o: any) => o.status === "processing");
-
     const mapped = processingOrders.map((o: any) => ({
       id: o.id,
       orderNumber: o.number,
