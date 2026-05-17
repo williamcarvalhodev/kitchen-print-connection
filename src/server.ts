@@ -137,7 +137,6 @@ async function wcRequest(settings: any, endpoint: string, method = "GET", body?:
   return res.json();
 }
 
-// Converte dados brutos do WooCommerce para o formato orderData
 function mapWcOrderToOrderData(o: any) {
   return {
     orderNumber: String(o.number || o.id),
@@ -148,9 +147,7 @@ function mapWcOrderToOrderData(o: any) {
     customerPhone: o.billing?.phone || "",
     paymentMethod: o.payment_method_title || "",
     deliveryMethod: o.shipping_lines?.[0]?.method_title || "Levantamento no local",
-    deliveryAddress: o.shipping?.address_1
-      ? `${o.shipping.address_1}, ${o.shipping.city}`
-      : null,
+    deliveryAddress: o.shipping?.address_1 ? `${o.shipping.address_1}, ${o.shipping.city}` : null,
     items: (o.line_items || []).map((i: any) => ({
       name: i.name,
       quantity: i.quantity,
@@ -163,18 +160,9 @@ function mapWcOrderToOrderData(o: any) {
     total: o.total || "",
     totalTax: o.total_tax || "",
     discount: o.discount_total || null,
-    coupons: (o.coupon_lines || []).map((c: any) => ({
-      code: c.code,
-      discount: c.discount,
-    })),
-    fees: (o.fee_lines || []).map((f: any) => ({
-      name: f.name,
-      amount: `${f.total} €`,
-    })),
-    taxes: (o.tax_lines || []).map((t: any) => ({
-      label: t.label,
-      amount: `${t.tax_total} €`,
-    })),
+    coupons: (o.coupon_lines || []).map((c: any) => ({ code: c.code, discount: c.discount })),
+    fees: (o.fee_lines || []).map((f: any) => ({ name: f.name, amount: `${f.total} €` })),
+    taxes: (o.tax_lines || []).map((t: any) => ({ label: t.label, amount: `${t.tax_total} €` })),
     notes: o.customer_note || null,
   };
 }
@@ -182,59 +170,44 @@ function mapWcOrderToOrderData(o: any) {
 const app = express();
 app.use(cors());
 
-// Webhook precisa do body raw para validação de assinatura
 app.use("/api/wc/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
 app.get("/api/healthz", (_req, res) => res.json({ status: "ok" }));
 
-// ── WEBHOOK DO WOOCOMMERCE ────────────────────────────────────────────────────
-// Recebe eventos de pedidos do WooCommerce e cria print jobs automaticamente
+// ── WEBHOOK DO WOOCOMMERCE ─────────────────────────────────────────────────────
 app.post("/api/wc/webhook", async (req, res) => {
   try {
     const topic = req.headers["x-wc-webhook-topic"] as string || "";
     console.log(`Webhook recebido: ${topic}`);
-
-    // Responde 200 imediatamente para o WooCommerce não marcar como falhado
     res.status(200).json({ received: true });
-
-    // Só processa pedidos actualizados para "processing"
     if (!topic.includes("order")) return;
-
     const order = typeof req.body === "string"
       ? JSON.parse(req.body)
       : Buffer.isBuffer(req.body)
         ? JSON.parse(req.body.toString())
         : req.body;
-
     if (!order?.id || order?.status !== "processing") {
       console.log(`Webhook ignorado: status=${order?.status}`);
       return;
     }
-
     const orderId = String(order.id);
     console.log(`Novo pedido em processamento: #${order.number || orderId}`);
-
-    // Verifica se já existe job para este pedido
-    const existing = await db.select()
-      .from(printJobsTable)
-      .where(eq(printJobsTable.orderId, orderId))
-      .limit(1);
-
+    const existing = await db.select().from(printJobsTable).where(eq(printJobsTable.orderId, orderId)).limit(1);
     if (existing.length > 0) {
-      console.log(`Job já existe para pedido #${orderId} (status: ${existing[0].status})`);
+      // Se já existe com erro, reseta para pending
+      if (existing[0].status === "error") {
+        await db.update(printJobsTable)
+          .set({ status: "pending", errorMessage: null, updatedAt: new Date() })
+          .where(eq(printJobsTable.id, existing[0].id));
+        console.log(`Job #${orderId} resetado de error para pending`);
+      } else {
+        console.log(`Job já existe para pedido #${orderId} (status: ${existing[0].status})`);
+      }
       return;
     }
-
-    // Cria o print job
     const orderData = mapWcOrderToOrderData(order);
-    await db.insert(printJobsTable).values({
-      orderId,
-      orderData,
-      status: "pending",
-      attempts: 0,
-    });
-
+    await db.insert(printJobsTable).values({ orderId, orderData, status: "pending", attempts: 0 });
     console.log(`Print job criado para pedido #${order.number || orderId}`);
   } catch (err: any) {
     console.error(`Erro no webhook: ${err.message}`);
@@ -298,13 +271,25 @@ app.get("/api/print-jobs", async (req, res) => {
   res.json(jobs.map(formatJob));
 });
 
+// FIX: se job já existe com status "error", reseta para "pending" em vez de 409
 app.post("/api/print-jobs", async (req, res) => {
   const { orderId, orderData, apiKey } = req.body;
   if (!orderId || !orderData || !apiKey) return res.status(400).json({ error: "Missing fields" });
   const validKey = await getApiKey();
   if (apiKey !== validKey) return res.status(401).json({ error: "Invalid API key" });
   const existing = await db.select().from(printJobsTable).where(eq(printJobsTable.orderId, orderId)).limit(1);
-  if (existing.length > 0) return res.status(409).json({ error: "Order already queued", job: formatJob(existing[0]) });
+  if (existing.length > 0) {
+    const existingJob = existing[0];
+    // Se já existe com erro, reseta para pending e actualiza os dados
+    if (existingJob.status === "error") {
+      const [updated] = await db.update(printJobsTable)
+        .set({ status: "pending", orderData, errorMessage: null, updatedAt: new Date() })
+        .where(eq(printJobsTable.id, existingJob.id))
+        .returning();
+      return res.status(201).json(formatJob(updated));
+    }
+    return res.status(409).json({ error: "Order already queued", job: formatJob(existingJob) });
+  }
   const [job] = await db.insert(printJobsTable).values({ orderId, orderData, status: "pending", attempts: 0 }).returning();
   return res.status(201).json(formatJob(job));
 });
