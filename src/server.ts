@@ -124,10 +124,12 @@ function formatJob(job: typeof printJobsTable.$inferSelect) {
 // O header Authorization é frequentemente removido por proxies/Apache/Nginx com SSL
 async function wcRequest(settings: any, endpoint: string, method = "GET", body?: any) {
   const separator = endpoint.includes("?") ? "&" : "?";
-  const url = `${settings.wcUrl}/wp-json/wc/v3/${endpoint}${separator}consumer_key=${settings.wcKey}&consumer_secret=${settings.wcSecret}`;
+  // Adiciona timestamp para evitar cache do WooCommerce/HPOS
+  const ts = Date.now();
+  const url = `${settings.wcUrl}/wp-json/wc/v3/${endpoint}${separator}consumer_key=${settings.wcKey}&consumer_secret=${settings.wcSecret}&_=${ts}`;
   const opts: any = {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
   };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(url, opts);
@@ -164,7 +166,12 @@ app.get("/api/wc/orders/processing", async (_req, res) => {
   try {
     const settings = mapSettings(await getAllSettings());
     const orders = await wcRequest(settings, "orders?status=processing&per_page=20&orderby=date&order=desc");
-    const mapped = orders.map((o: any) => ({
+
+    // FIX: filtra pedidos que realmente têm status "processing"
+    // O HPOS pode retornar pedidos com status desincronizado
+    const processingOrders = orders.filter((o: any) => o.status === "processing");
+
+    const mapped = processingOrders.map((o: any) => ({
       id: o.id,
       orderNumber: o.number,
       date: new Date(o.date_created).toLocaleString("pt-PT"),
